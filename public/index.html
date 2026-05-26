@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shared Multi-Pool Dice Roller Pro</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root {
+            --bg-color: #121214;
+            --card-bg: #1e1e24;
+            --accent-color: #ff4757;
+            --accent-hover: #ff6b81;
+            --text-color: #f1f2f6;
+            --muted-text: #a4b0be;
+            --border-color: #2f3542;
+            --success-color: #2ed573;
+            --warning-color: #ffa502;
+            --crit-success: #00ff88;
+            --crit-fail: #ff3838;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1.3fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 900px) {
+            .container { grid-template-columns: 1fr; }
+        }
+
+        h2 { margin-top: 0; color: var(--text-color); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; font-size: 1.3rem;}
+
+        .card {
+            background-color: var(--card-bg);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+        }
+
+        .form-group { margin-bottom: 16px; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted-text); }
+        
+        input, select {
+            width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px;
+            background-color: #121214; color: #fff; box-sizing: border-box; font-size: 1rem;
+        }
+        input:focus, select:focus { border-color: var(--accent-color); outline: none; }
+
+        .username-card {
+            background: rgba(255, 71, 87, 0.1);
+            border: 1px solid var(--accent-color);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            background: #121214;
+            padding: 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 16px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            text-transform: none;
+            letter-spacing: normal;
+            color: var(--text-color);
+            font-weight: 500;
+        }
+        .checkbox-label input { width: auto; margin: 0; }
+
+        .dice-builder-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 15px; }
+        .dice-pool-row {
+            display: flex; gap: 10px; align-items: center; background: #121214;
+            padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);
+        }
+        .dice-pool-row input[type="number"] { width: 70px; text-align: center; }
+        .dice-pool-row select { flex: 2; }
+        .dice-pool-row .custom-sides-input { flex: 1; display: none; }
+
+        .btn-icon {
+            background: #ff4757; color: white; border: none; padding: 10px; 
+            border-radius: 6px; cursor: pointer; font-weight: bold; width: 40px;
+        }
+        .btn-icon:hover { background: var(--accent-hover); }
+
+        .adv-toggle-group { display: flex; gap: 8px; margin-bottom: 20px; }
+        .adv-btn {
+            flex: 1; background: #2f3542; color: var(--muted-text); border: none; padding: 10px;
+            border-radius: 6px; font-weight: bold; cursor: pointer; transition: all 0.2s; text-align: center;
+        }
+        .adv-btn.active[data-mode="normal"] { background: #747d8c; color: white; }
+        .adv-btn.active[data-mode="advantage"] { background: var(--success-color); color: white; }
+        .adv-btn.active[data-mode="disadvantage"] { background: var(--warning-color); color: white; }
+
+        button.primary-roll {
+            width: 100%; padding: 14px; background-color: var(--accent-color); color: white;
+            border: none; border-radius: 6px; font-size: 1.2rem; font-weight: bold; cursor: pointer; transition: background 0.2s;
+        }
+        button.primary-roll:hover { background-color: var(--accent-hover); }
+        button.secondary { background-color: #2f3542; margin-top: 10px; font-size: 0.85rem; padding: 8px; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+        button.secondary:hover { background-color: #3f4656; }
+
+        .result-display {
+            text-align: center; padding: 20px; background: #121214; border-radius: 8px;
+            margin-bottom: 20px; border-left: 5px solid var(--accent-color);
+            transition: all 0.3s;
+        }
+        .result-display.crit-hit-glow { border-left-color: var(--crit-success); box-shadow: inset 0 0 15px rgba(0, 255, 136, 0.15); }
+        .result-display.crit-miss-glow { border-left-color: var(--crit-fail); box-shadow: inset 0 0 15px rgba(255, 56, 56, 0.15); }
+        .result-display.crit-both-glow { border-left-color: #a55eea; box-shadow: inset 0 0 15px rgba(165, 94, 234, 0.15); }
+
+        .total-score { font-size: 3.5rem; font-weight: 800; color: #fff; margin: 8px 0; }
+        .breakdown { font-size: 0.95rem; color: var(--muted-text); text-align: left; line-height: 1.5; }
+        .pool-breakdown-line { border-bottom: 1px dashed #2f3542; padding: 4px 0; }
+        .dropped { text-decoration: line-through; color: #57606f; opacity: 0.5; }
+        
+        .die-val { padding: 1px 4px; border-radius: 3px; font-weight: bold; margin: 0 1px; background: #2f3542; color: #fff; }
+        .die-val.crit-success-text { background: rgba(0, 255, 136, 0.2); color: var(--crit-success); border: 1px solid var(--crit-success); }
+        .die-val.crit-fail-text { background: rgba(255, 56, 56, 0.2); color: var(--crit-fail); border: 1px solid var(--crit-fail); }
+
+        .list-container { max-height: 500px; overflow-y: auto; margin-bottom: 15px; padding-right: 4px;}
+        .history-item {
+            padding: 12px; border-bottom: 1px solid var(--border-color); font-size: 0.9rem;
+            display: flex; justify-content: space-between; align-items: center; gap: 10px;
+        }
+        .history-item:first-child { background-color: rgba(255, 71, 87, 0.05); border-radius: 4px; border-left: 4px solid var(--accent-color); }
+        
+        .history-item.crit-success-card { border-left: 5px solid var(--crit-success) !important; background-color: rgba(0, 255, 136, 0.03); }
+        .history-item.crit-fail-card { border-left: 5px solid var(--crit-fail) !important; background-color: rgba(255, 56, 56, 0.03); }
+        .history-item.crit-both-card { border-left: 5px solid #a55eea !important; background-color: rgba(165, 94, 234, 0.03); }
+
+        .history-meta { font-size: 0.75rem; color: var(--muted-text); margin-top: 4px; }
+        .player-tag { color: var(--accent-color); font-weight: bold; font-size: 0.95rem; }
+
+        .badge { padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; margin-left: 4px; display: inline-block;}
+        .badge.adv { background: var(--success-color); color: #fff; }
+        .badge.dis { background: var(--warning-color); color: #fff; }
+        .badge.crit-hit { background: var(--crit-success); color: #121214; }
+        .badge.crit-miss { background: var(--crit-fail); color: #fff; }
+        .badge.exploding { background: #6c5ce7; color: #fff; }
+
+        .preset-tags { display: flex; flex-direction: column; gap: 6px; }
+        .preset-row {
+            display: flex; justify-content: space-between; align-items: center;
+            background: #2f3542; padding: 8px 12px; border-radius: 6px; font-size: 0.9rem;
+        }
+        .preset-info { cursor: pointer; flex-grow: 1; }
+        .preset-delete { background: none; border: none; color: #ff4757; cursor: pointer; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    
+    <main class="card">
+        <div class="username-card">
+            <label for="username" style="color: #fff;">Your Character/Player Name</label>
+            <input type="text" id="username" placeholder="Enter name...">
+        </div>
+
+        <h2>Assemble Dice Roll</h2>
+        <div class="form-group">
+            <div id="diceBuilderList" class="dice-builder-list"></div>
+            <button type="button" id="addPoolBtn" class="secondary">+ Add Another Dice Type</button>
+        </div>
+
+        <div class="form-group">
+            <label for="modifier">Flat Modifier</label>
+            <input type="number" id="modifier" value="0">
+        </div>
+
+        <div class="form-group">
+            <label>Rule Enhancements</label>
+            <div class="features-grid">
+                <div>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="enableExploding"> Exploding Dice (Max rolls re-roll)
+                    </label>
+                </div>
+                <div>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="enableAlerts" checked> Monitor d20 Crits (1s & 20s)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Roll Mode</label>
+            <div class="adv-toggle-group">
+                <button class="adv-btn active" data-mode="normal">Normal</button>
+                <button class="adv-btn" data-mode="advantage">Advantage</button>
+                <button class="adv-btn" data-mode="disadvantage">Disadvantage</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="presetName">Save Configuration Locally</label>
+            <input type="text" id="presetName" placeholder="e.g., Paladin Divine Smite">
+        </div>
+
+        <button id="rollBtn" class="primary-roll">ROLL ALL DICE</button>
+        <button id="savePresetBtn" class="secondary" style="width: 100%;">Save Setup to My Device</button>
+
+        <div style="margin-top: 24px;">
+            <label>Your Saved Custom Setups:</label>
+            <div id="presetContainer" class="preset-tags"></div>
+        </div>
+    </main>
+
+    <section class="card">
+        <h2>Latest Live Result</h2>
+        <div id="displayContainer" class="result-display">
+            <div id="resultLabel" style="font-size: 0.85rem; color: var(--muted-text); font-weight: bold; text-transform: uppercase; margin-bottom: 5px;">Waiting for a roll...</div>
+            <div id="totalScore" class="total-score">--</div>
+            <div id="breakdown" class="breakdown"></div>
+        </div>
+
+        <h2>Shared Room History</h2>
+        <div class="list-container">
+            <div id="historyList"></div>
+        </div>
+        <button id="clearHistoryBtn" class="secondary" style="float: right;">Clear Room Log</button>
+    </section>
+
+</div>
+
+<script>
+    const socket = io();
+    let rollMode = 'normal';
+    let presets = JSON.parse(localStorage.getItem('savedMultiPresetsProV6')) || [];
+
+    const diceBuilderList = document.getElementById('diceBuilderList');
+    const addPoolBtn = document.getElementById('addPoolBtn');
+    const modifierInput = document.getElementById('modifier');
+    const enableExplodingInput = document.getElementById('enableExploding');
+    const enableAlertsInput = document.getElementById('enableAlerts');
+    const presetNameInput = document.getElementById('presetName');
+    const usernameInput = document.getElementById('username');
+    const rollBtn = document.getElementById('rollBtn');
+    const savePresetBtn = document.getElementById('savePresetBtn');
+    const presetContainer = document.getElementById('presetContainer');
+    const displayContainer = document.getElementById('displayContainer');
+    const resultLabel = document.getElementById('resultLabel');
+    const totalScoreDisplay = document.getElementById('totalScore');
+    const breakdownDisplay = document.getElementById('breakdown');
+    const historyList = document.getElementById('historyList');
+    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+
+    usernameInput.value = localStorage.getItem('diceUsername') || "Anonymous Player";
+    usernameInput.addEventListener('input', () => localStorage.setItem('diceUsername', usernameInput.value));
+
+    window.addEventListener('DOMContentLoaded', () => {
+        if(diceBuilderList.children.length === 0) createDicePoolRow(1, '20');
+        renderPresets();
+    });
+
+    addPoolBtn.addEventListener('click', () => createDicePoolRow(1, '6'));
+
+    function createDicePoolRow(count = 1, selectedSize = '6', customSize = '') {
+        const row = document.createElement('div');
+        row.className = 'dice-pool-row';
+        row.innerHTML = `
+            <span style="font-size:0.9rem; color:var(--muted-text); font-weight:bold;">Roll</span>
+            <input type="number" class="pool-count" value="${count}" min="1" max="100">
+            <select class="pool-size-select">
+                <option value="4" ${selectedSize === '4' ? 'selected' : ''}>d4</option>
+                <option value="6" ${selectedSize === '6' ? 'selected' : ''}>d6</option>
+                <option value="8" ${selectedSize === '8' ? 'selected' : ''}>d8</option>
+                <option value="10" ${selectedSize === '10' ? 'selected' : ''}>d10</option>
+                <option value="12" ${selectedSize === '12' ? 'selected' : ''}>d12</option>
+                <option value="20" ${selectedSize === '20' ? 'selected' : ''}>d20</option>
+                <option value="100" ${selectedSize === '100' ? 'selected' : ''}>d100</option>
+                <option value="custom" ${selectedSize === 'custom' ? 'selected' : ''}>Custom size...</option>
+            </select>
+            <input type="number" class="custom-sides-input" placeholder="Sides" min="2" value="${customSize}">
+            <button type="button" class="btn-icon delete-pool-row-btn">&times;</button>
+        `;
+        const selectEl = row.querySelector('.pool-size-select');
+        const customInputEl = row.querySelector('.custom-sides-input');
+        const toggleCustomInput = () => { customInputEl.style.display = selectEl.value === 'custom' ? 'block' : 'none'; };
+        selectEl.addEventListener('change', toggleCustomInput);
+        toggleCustomInput();
+        row.querySelector('.delete-pool-row-btn').addEventListener('click', () => {
+            if(diceBuilderList.children.length > 1) row.remove();
+        });
+        diceBuilderList.appendChild(row);
+    }
+
+    document.querySelectorAll('.adv-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.adv-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            rollMode = btn.getAttribute('data-mode');
+        });
+    });
+
+    function getCurrentSetup() {
+        const pools = [];
+        document.querySelectorAll('.dice-pool-row').forEach(row => {
+            const count = parseInt(row.querySelector('.pool-count').value) || 1;
+            const selectVal = row.querySelector('.pool-size-select').value;
+            let sides = selectVal === 'custom' ? (parseInt(row.querySelector('.custom-sides-input').value) || 6) : parseInt(selectVal);
+            pools.push({ count, sides, selectVal });
+        });
+        return pools;
+    }
+
+    function formatDieValueHTML(val, sides, alertsEnabled) {
+        if (alertsEnabled && sides === 20) {
+            if (val === 20) return `<span class="die-val crit-success-text">${val}</span>`;
+            if (val === 1) return `<span class="die-val crit-fail-text">${val}</span>`;
+        }
+        return `<span class="die-val">${val}</span>`;
+    }
+
+    // --- LOGIC ENGINE ---
+    rollBtn.addEventListener('click', () => {
+        const pools = getCurrentSetup();
+        const mod = parseInt(modifierInput.value) || 0;
+        const name = presetNameInput.value.trim();
+        const player = usernameInput.value.trim() || "Anonymous";
+        const isExploding = enableExplodingInput.checked;
+        const alertsEnabled = enableAlertsInput.checked;
+
+        let formulaArr = pools.map(p => `${p.count}d${p.sides}${isExploding ? '!' : ''}`);
+        let formulaText = formulaArr.join(' + ');
+        if(mod !== 0) formulaText += ` ${mod >= 0 ? '+' : '-'} ${Math.abs(mod)}`;
+        if(rollMode !== 'normal') formulaText += ` (${rollMode})`;
+
+        const generatePoolData = () => pools.map(p => {
+            let baseRolls = [];
+            let explodedRolls = [];
+            let critHitsCount = 0;
+            let critMissCount = 0;
+            
+            for(let i=0; i < p.count; i++) {
+                let initialRoll = Math.floor(Math.random() * p.sides) + 1;
+                baseRolls.push(initialRoll);
+                
+                if (alertsEnabled && p.sides === 20) {
+                    if (initialRoll === 20) critHitsCount++;
+                    if (initialRoll === 1) critMissCount++;
+                }
+
+                if(isExploding && initialRoll === p.sides) {
+                    let loopRoll = initialRoll;
+                    while(loopRoll === p.sides) {
+                        loopRoll = Math.floor(Math.random() * p.sides) + 1;
+                        explodedRolls.push(loopRoll);
+                        
+                        if (alertsEnabled && p.sides === 20) {
+                            if (loopRoll === 20) critHitsCount++;
+                            if (loopRoll === 1) critMissCount++;
+                        }
+                    }
+                }
+            }
+            
+            const totalRollsList = baseRolls.concat(explodedRolls);
+            const sum = totalRollsList.reduce((a, b) => a + b, 0);
+            return { sides: p.sides, base: baseRolls, extra: explodedRolls, sum, crits: critHitsCount, misses: critMissCount };
+        });
+
+        let totalScore = 0;
+        let finalHtmlBreakdown = '';
+        let totalCrits = 0;
+        let totalMisses = 0;
+
+        if(rollMode === 'normal') {
+            const rolledData = generatePoolData();
+            totalScore = rolledData.reduce((acc, p) => acc + p.sum, 0) + mod;
+            
+            totalCrits = rolledData.reduce((acc, p) => acc + p.crits, 0);
+            totalMisses = rolledData.reduce((acc, p) => acc + p.misses, 0);
+
+            finalHtmlBreakdown = rolledData.map(p => {
+                let baseDiceHTML = p.base.map(v => formatDieValueHTML(v, p.sides, alertsEnabled)).join(' ');
+                let extraDiceHTML = p.extra.length > 0 ? ` <span style="color:#6c5ce7; font-weight:bold;">+ Exploded: [${p.extra.map(v => formatDieValueHTML(v, p.sides, alertsEnabled)).join(' ')}]</span>` : '';
+                return `<div class="pool-breakdown-line"><strong>${p.base.length}d${p.sides}</strong>: ${baseDiceHTML}${extraDiceHTML}</div>`;
+            }).join('');
+            if(mod !== 0) finalHtmlBreakdown += `<div class="pool-breakdown-line"><strong>Mod</strong>: ${mod >= 0 ? '+' : '-'}${Math.abs(mod)}</div>`;
+        } else {
+            const set1 = generatePoolData();
+            const set2 = generatePoolData();
+            const sum1 = set1.reduce((acc, p) => acc + p.sum, 0) + mod;
+            const sum2 = set2.reduce((acc, p) => acc + p.sum, 0) + mod;
+
+            let useSet1 = rollMode === 'advantage' ? sum1 >= sum2 : sum1 <= sum2;
+            const keptSet = useSet1 ? set1 : set2;
+            const droppedSet = useSet1 ? set2 : set1;
+            totalScore = useSet1 ? sum1 : sum2;
+
+            totalCrits = keptSet.reduce((acc, p) => acc + p.crits, 0);
+            totalMisses = keptSet.reduce((acc, p) => acc + p.misses, 0);
+
+            const printSetHTML = (set) => set.map(p => {
+                let totalDiceArray = p.base.concat(p.extra);
+                let diceHTML = totalDiceArray.map(v => formatDieValueHTML(v, p.sides, alertsEnabled)).join(' ');
+                return `<strong>${p.base.length}d${p.sides}</strong>: ${diceHTML}`;
+            }).join(' | ');
+
+            finalHtmlBreakdown = `
+                <div class="pool-breakdown-line" style="color:var(--success-color)"><strong>Kept:</strong> ${printSetHTML(keptSet)} ${mod !== 0 ? (mod>=0?'+':'')+mod : ''}</div>
+                <div class="pool-breakdown-line dropped"><strong>Dropped:</strong> ${printSetHTML(droppedSet)}</div>
+            `;
+        }
+
+        let alertState = "normal";
+        if(totalCrits > 0 && totalMisses > 0) alertState = "crit-both";
+        else if(totalCrits > 0) alertState = "crit-success";
+        else if(totalMisses > 0) alertState = "crit-fail";
+
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        const outgoingPackage = {
+            player: player,
+            title: name ? `${name} [${formulaText}]` : formulaText,
+            total: totalScore,
+            htmlDetails: finalHtmlBreakdown,
+            time: timestamp,
+            alert: alertState,
+            exploding: isExploding,
+            critsCount: totalCrits,
+            missesCount: totalMisses
+        };
+
+        socket.emit('playerRoll', outgoingPackage);
+    });
+
+    // --- SOCKETS ---
+    socket.on('initialHistory', (serverHistory) => renderHistoryList(serverHistory));
+
+    socket.on('broadcastRoll', (data) => {
+        displayContainer.className = "result-display";
+        let badgeSection = "";
+        
+        if(data.exploding) badgeSection += `<span class="badge exploding">Exploding</span>`;
+        
+        if(data.alert === "crit-success") {
+            displayContainer.classList.add("crit-hit-glow");
+            badgeSection += `<span class="badge crit-hit">NAT 20 x${data.critsCount}</span>`;
+        } else if(data.alert === "crit-fail") {
+            displayContainer.classList.add("crit-miss-glow");
+            badgeSection += `<span class="badge crit-miss">NAT 1 x${data.missesCount}</span>`;
+        } else if(data.alert === "crit-both") {
+            displayContainer.classList.add("crit-both-glow");
+            badgeSection += `<span class="badge crit-hit">NAT 20 x${data.critsCount}</span><span class="badge crit-miss">NAT 1 x${data.missesCount}</span>`;
+        }
+
+        resultLabel.innerHTML = `<span class="player-tag">${data.player}</span> rolled ${data.title} ${badgeSection}`;
+        totalScoreDisplay.textContent = data.total;
+        breakdownDisplay.innerHTML = data.htmlDetails;
+
+        socket.emit('requestSync'); 
+    });
+
+    socket.on('historyCleared', () => {
+        displayContainer.className = "result-display";
+        totalScoreDisplay.textContent = '--';
+        breakdownDisplay.innerHTML = '';
+        resultLabel.textContent = 'Log Cleared By Host';
+        renderHistoryList([]);
+    });
+
+    function renderHistoryList(historyLog) {
+        historyList.innerHTML = '';
+        if(!historyLog || historyLog.length === 0) {
+            historyList.innerHTML = '<div style="color:var(--muted-text); font-style:italic; padding:10px;">No rolls logged yet.</div>';
+            return;
+        }
+        historyLog.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'history-item';
+            
+            if(item.alert === "crit-success") div.classList.add("crit-success-card");
+            if(item.alert === "crit-fail") div.classList.add("crit-fail-card");
+            if(item.alert === "crit-both") div.classList.add("crit-both-card");
+
+            const stripDetails = item.htmlDetails.replace(/<\/div>/g, ' | ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+            
+            let badgesHTML = '';
+            if(item.critsCount > 0) badgesHTML += `<span class="badge crit-hit">NAT 20 x${item.critsCount}</span>`;
+            if(item.missesCount > 0) badgesHTML += `<span class="badge crit-miss">NAT 1 x${item.missesCount}</span>`;
+
+            div.innerHTML = `
+                <div style="overflow: hidden; text-overflow: ellipsis;">
+                    <div>
+                        <span class="player-tag">${item.player}</span>: <strong>${item.title}</strong>
+                        ${badgesHTML}
+                    </div>
+                    <div class="history-meta">${item.time} • ${stripDetails}</div>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: bold; color: ${item.alert==='crit-success'?'var(--crit-success)':(item.alert==='crit-fail'?'var(--crit-fail)':'var(--accent-color)')}; min-width:40px; text-align:right;">${item.total}</div>
+            `;
+            historyList.appendChild(div);
+        });
+    }
+
+    clearHistoryBtn.addEventListener('click', () => socket.emit('clearSharedHistory'));
+
+    // Presets
+    savePresetBtn.addEventListener('click', () => {
+        let name = presetNameInput.value.trim();
+        const pools = getCurrentSetup();
+        const mod = parseInt(modifierInput.value) || 0;
+        if(!name) name = pools.map(p => `${p.count}d${p.sides}`).join('+') + (mod !== 0 ? `${mod>=0?'+':''}${mod}` : '');
+        
+        presets.push({ 
+            name, pools, mod, mode: rollMode,
+            exploding: enableExplodingInput.checked,
+            alerts: enableAlertsInput.checked
+        });
+        localStorage.setItem('savedMultiPresetsProV6', JSON.stringify(presets));
+        renderPresets();
+        presetNameInput.value = '';
+    });
+
+    function renderPresets() {
+        presetContainer.innerHTML = '';
+        if(presets.length === 0) {
+            presetContainer.innerHTML = '<div style="color:var(--muted-text); font-size:0.85rem; font-style:italic;">No saved profiles.</div>';
+            return;
+        }
+        presets.forEach((preset, idx) => {
+            const div = document.createElement('div');
+            div.className = 'preset-row';
+            let badgeText = preset.mode !== 'normal' ? `<span class="badge ${preset.mode === 'advantage'?'adv':'dis'}">${preset.mode.slice(0,3)}</span>` : '';
+            if(preset.exploding) badgeText += `<span class="badge exploding">!</span>`;
+            
+            div.innerHTML = `
+                <div class="preset-info"><strong>${preset.name}</strong> ${badgeText}</div>
+                <button class="preset-delete" data-index="${idx}">&times;</button>
+            `;
+            div.querySelector('.preset-info').addEventListener('click', () => {
+                diceBuilderList.innerHTML = '';
+                preset.pools.forEach(p => createDicePoolRow(p.count, p.selectVal, p.selectVal === 'custom' ? p.sides : ''));
+                modifierInput.value = preset.mod;
+                rollMode = preset.mode;
+                
+                enableExplodingInput.checked = preset.exploding || false;
+                enableAlertsInput.checked = preset.alerts || false;
+
+                document.querySelectorAll('.adv-btn').forEach(b => b.classList.toggle('active', b.getAttribute('data-mode') === rollMode));
+                presetNameInput.value = preset.name;
+            });
+            div.querySelector('.preset-delete').addEventListener('click', (e) => {
+                e.stopPropagation(); presets.splice(idx, 1);
+                localStorage.setItem('savedMultiPresetsProV6', JSON.stringify(presets));
+                renderPresets();
+            });
+            presetContainer.appendChild(div);
+        });
+    }
+</script>
+</body>
+</html>
