@@ -35,7 +35,7 @@
             width: 100%;
             max-width: 1200px;
             display: grid;
-            grid-template-columns: 1.3fr 1fr;
+            grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
             gap: 20px;
         }
 
@@ -172,6 +172,30 @@
         }
         .preset-info { cursor: pointer; flex-grow: 1; }
         .preset-delete { background: none; border: none; color: #ff4757; cursor: pointer; font-weight: bold; }
+        /* Let grid/flex content wrap instead of expanding or clipping the cards. */
+        .container, .card, .preset-info { min-width: 0; }
+        .card { overflow-wrap: anywhere; }
+        .container { box-sizing: border-box; }
+        .features-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .checkbox-label input, .btn-icon, .preset-delete { flex-shrink: 0; }
+        .dice-pool-row { flex-wrap: wrap; }
+        .dice-pool-row .pool-count { flex: 0 0 70px; }
+        .dice-pool-row select { flex: 2 1 110px; min-width: 110px; width: auto; }
+        .dice-pool-row .custom-sides-input { flex: 1 1 90px; min-width: 80px; }
+        .adv-toggle-group { flex-wrap: wrap; }
+        .adv-btn { flex: 1 1 100px; }
+        .history-item > div:first-child {
+            flex: 1; min-width: 0;
+            /* Override the generated legacy clipping rule; preserve all details. */
+            overflow: visible !important;
+        }
+        .history-item { align-items: flex-start; }
+        .history-item > div:last-child { flex-shrink: 0; }
+        .preset-row { gap: 10px; }
+        @media (max-width: 900px) {
+            .container { grid-template-columns: minmax(0, 1fr); }
+            .total-score { font-size: 2.5rem; }
+        }
     </style>
 </head>
 <body>
@@ -226,6 +250,7 @@
         </div>
 
         <button id="rollBtn" class="primary-roll">ROLL ALL DICE</button>
+        <div id="rollStatus" role="status" aria-live="polite"></div>
         <button id="savePresetBtn" class="secondary" style="width: 100%;">Save Setup to My Device</button>
 
         <div style="margin-top: 24px;">
@@ -246,338 +271,12 @@
         <div class="list-container">
             <div id="historyList"></div>
         </div>
-        <button id="clearHistoryBtn" class="secondary" style="float: right;">Clear Room Log</button>
+        <button id="clearHistoryBtn" class="secondary" style="float: right;" disabled title="Disabled until host controls are available">Clear Room Log (disabled)</button>
     </section>
 
 </div>
 
-<script>
-    const socket = io();
-    let rollMode = 'normal';
-    let presets = JSON.parse(localStorage.getItem('savedMultiPresetsProV6')) || [];
-
-    const diceBuilderList = document.getElementById('diceBuilderList');
-    const addPoolBtn = document.getElementById('addPoolBtn');
-    const modifierInput = document.getElementById('modifier');
-    const enableExplodingInput = document.getElementById('enableExploding');
-    const enableAlertsInput = document.getElementById('enableAlerts');
-    const presetNameInput = document.getElementById('presetName');
-    const usernameInput = document.getElementById('username');
-    const rollBtn = document.getElementById('rollBtn');
-    const savePresetBtn = document.getElementById('savePresetBtn');
-    const presetContainer = document.getElementById('presetContainer');
-    const displayContainer = document.getElementById('displayContainer');
-    const resultLabel = document.getElementById('resultLabel');
-    const totalScoreDisplay = document.getElementById('totalScore');
-    const breakdownDisplay = document.getElementById('breakdown');
-    const historyList = document.getElementById('historyList');
-    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-
-    usernameInput.value = localStorage.getItem('diceUsername') || "Anonymous Player";
-    usernameInput.addEventListener('input', () => localStorage.setItem('diceUsername', usernameInput.value));
-
-    window.addEventListener('DOMContentLoaded', () => {
-        if(diceBuilderList.children.length === 0) createDicePoolRow(1, '20');
-        renderPresets();
-    });
-
-    addPoolBtn.addEventListener('click', () => createDicePoolRow(1, '6'));
-
-    function createDicePoolRow(count = 1, selectedSize = '6', customSize = '') {
-        const row = document.createElement('div');
-        row.className = 'dice-pool-row';
-        row.innerHTML = `
-            <span style="font-size:0.9rem; color:var(--muted-text); font-weight:bold;">Roll</span>
-            <input type="number" class="pool-count" value="${count}" min="1" max="100">
-            <select class="pool-size-select">
-                <option value="4" ${selectedSize === '4' ? 'selected' : ''}>d4</option>
-                <option value="6" ${selectedSize === '6' ? 'selected' : ''}>d6</option>
-                <option value="8" ${selectedSize === '8' ? 'selected' : ''}>d8</option>
-                <option value="10" ${selectedSize === '10' ? 'selected' : ''}>d10</option>
-                <option value="12" ${selectedSize === '12' ? 'selected' : ''}>d12</option>
-                <option value="20" ${selectedSize === '20' ? 'selected' : ''}>d20</option>
-                <option value="100" ${selectedSize === '100' ? 'selected' : ''}>d100</option>
-                <option value="custom" ${selectedSize === 'custom' ? 'selected' : ''}>Custom size...</option>
-            </select>
-            <input type="number" class="custom-sides-input" placeholder="Sides" min="2" value="${customSize}">
-            <button type="button" class="btn-icon delete-pool-row-btn">&times;</button>
-        `;
-        const selectEl = row.querySelector('.pool-size-select');
-        const customInputEl = row.querySelector('.custom-sides-input');
-        const toggleCustomInput = () => { customInputEl.style.display = selectEl.value === 'custom' ? 'block' : 'none'; };
-        selectEl.addEventListener('change', toggleCustomInput);
-        toggleCustomInput();
-        row.querySelector('.delete-pool-row-btn').addEventListener('click', () => {
-            if(diceBuilderList.children.length > 1) row.remove();
-        });
-        diceBuilderList.appendChild(row);
-    }
-
-    document.querySelectorAll('.adv-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.adv-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            rollMode = btn.getAttribute('data-mode');
-        });
-    });
-
-    function getCurrentSetup() {
-        const pools = [];
-        document.querySelectorAll('.dice-pool-row').forEach(row => {
-            const count = parseInt(row.querySelector('.pool-count').value) || 1;
-            const selectVal = row.querySelector('.pool-size-select').value;
-            let sides = selectVal === 'custom' ? (parseInt(row.querySelector('.custom-sides-input').value) || 6) : parseInt(selectVal);
-            pools.push({ count, sides, selectVal });
-        });
-        return pools;
-    }
-
-    function formatDieValueHTML(val, sides, alertsEnabled) {
-        if (alertsEnabled && sides === 20) {
-            if (val === 20) return `<span class="die-val crit-success-text">${val}</span>`;
-            if (val === 1) return `<span class="die-val crit-fail-text">${val}</span>`;
-        }
-        return `<span class="die-val">${val}</span>`;
-    }
-
-    // --- LOGIC ENGINE ---
-    rollBtn.addEventListener('click', () => {
-        const pools = getCurrentSetup();
-        const mod = parseInt(modifierInput.value) || 0;
-        const name = presetNameInput.value.trim();
-        const player = usernameInput.value.trim() || "Anonymous";
-        const isExploding = enableExplodingInput.checked;
-        const alertsEnabled = enableAlertsInput.checked;
-
-        let formulaArr = pools.map(p => `${p.count}d${p.sides}${isExploding ? '!' : ''}`);
-        let formulaText = formulaArr.join(' + ');
-        if(mod !== 0) formulaText += ` ${mod >= 0 ? '+' : '-'} ${Math.abs(mod)}`;
-        if(rollMode !== 'normal') formulaText += ` (${rollMode})`;
-
-        const generatePoolData = () => pools.map(p => {
-            let baseRolls = [];
-            let explodedRolls = [];
-            let critHitsCount = 0;
-            let critMissCount = 0;
-            
-            for(let i=0; i < p.count; i++) {
-                let initialRoll = Math.floor(Math.random() * p.sides) + 1;
-                baseRolls.push(initialRoll);
-                
-                if (alertsEnabled && p.sides === 20) {
-                    if (initialRoll === 20) critHitsCount++;
-                    if (initialRoll === 1) critMissCount++;
-                }
-
-                if(isExploding && initialRoll === p.sides) {
-                    let loopRoll = initialRoll;
-                    while(loopRoll === p.sides) {
-                        loopRoll = Math.floor(Math.random() * p.sides) + 1;
-                        explodedRolls.push(loopRoll);
-                        
-                        if (alertsEnabled && p.sides === 20) {
-                            if (loopRoll === 20) critHitsCount++;
-                            if (loopRoll === 1) critMissCount++;
-                        }
-                    }
-                }
-            }
-            
-            const totalRollsList = baseRolls.concat(explodedRolls);
-            const sum = totalRollsList.reduce((a, b) => a + b, 0);
-            return { sides: p.sides, base: baseRolls, extra: explodedRolls, sum, crits: critHitsCount, misses: critMissCount };
-        });
-
-        let totalScore = 0;
-        let finalHtmlBreakdown = '';
-        let totalCrits = 0;
-        let totalMisses = 0;
-
-        if(rollMode === 'normal') {
-            const rolledData = generatePoolData();
-            totalScore = rolledData.reduce((acc, p) => acc + p.sum, 0) + mod;
-            
-            totalCrits = rolledData.reduce((acc, p) => acc + p.crits, 0);
-            totalMisses = rolledData.reduce((acc, p) => acc + p.misses, 0);
-
-            finalHtmlBreakdown = rolledData.map(p => {
-                let baseDiceHTML = p.base.map(v => formatDieValueHTML(v, p.sides, alertsEnabled)).join(' ');
-                let extraDiceHTML = p.extra.length > 0 ? ` <span style="color:#6c5ce7; font-weight:bold;">+ Exploded: [${p.extra.map(v => formatDieValueHTML(v, p.sides, alertsEnabled)).join(' ')}]</span>` : '';
-                return `<div class="pool-breakdown-line"><strong>${p.base.length}d${p.sides}</strong>: ${baseDiceHTML}${extraDiceHTML}</div>`;
-            }).join('');
-            if(mod !== 0) finalHtmlBreakdown += `<div class="pool-breakdown-line"><strong>Mod</strong>: ${mod >= 0 ? '+' : '-'}${Math.abs(mod)}</div>`;
-        } else {
-            const set1 = generatePoolData();
-            const set2 = generatePoolData();
-            const sum1 = set1.reduce((acc, p) => acc + p.sum, 0) + mod;
-            const sum2 = set2.reduce((acc, p) => acc + p.sum, 0) + mod;
-
-            let useSet1 = rollMode === 'advantage' ? sum1 >= sum2 : sum1 <= sum2;
-            const keptSet = useSet1 ? set1 : set2;
-            const droppedSet = useSet1 ? set2 : set1;
-            totalScore = useSet1 ? sum1 : sum2;
-
-            totalCrits = keptSet.reduce((acc, p) => acc + p.crits, 0);
-            totalMisses = keptSet.reduce((acc, p) => acc + p.misses, 0);
-
-            const printSetHTML = (set) => set.map(p => {
-                let totalDiceArray = p.base.concat(p.extra);
-                let diceHTML = totalDiceArray.map(v => formatDieValueHTML(v, p.sides, alertsEnabled)).join(' ');
-                return `<strong>${p.base.length}d${p.sides}</strong>: ${diceHTML}`;
-            }).join(' | ');
-
-            finalHtmlBreakdown = `
-                <div class="pool-breakdown-line" style="color:var(--success-color)"><strong>Kept:</strong> ${printSetHTML(keptSet)} ${mod !== 0 ? (mod>=0?'+':'')+mod : ''}</div>
-                <div class="pool-breakdown-line dropped"><strong>Dropped:</strong> ${printSetHTML(droppedSet)}</div>
-            `;
-        }
-
-        let alertState = "normal";
-        if(totalCrits > 0 && totalMisses > 0) alertState = "crit-both";
-        else if(totalCrits > 0) alertState = "crit-success";
-        else if(totalMisses > 0) alertState = "crit-fail";
-
-        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        
-        const outgoingPackage = {
-            player: player,
-            title: name ? `${name} [${formulaText}]` : formulaText,
-            total: totalScore,
-            htmlDetails: finalHtmlBreakdown,
-            time: timestamp,
-            alert: alertState,
-            exploding: isExploding,
-            critsCount: totalCrits,
-            missesCount: totalMisses
-        };
-
-        socket.emit('playerRoll', outgoingPackage);
-    });
-
-    // --- SOCKETS ---
-    socket.on('initialHistory', (serverHistory) => renderHistoryList(serverHistory));
-
-    socket.on('broadcastRoll', (data) => {
-        displayContainer.className = "result-display";
-        let badgeSection = "";
-        
-        if(data.exploding) badgeSection += `<span class="badge exploding">Exploding</span>`;
-        
-        if(data.alert === "crit-success") {
-            displayContainer.classList.add("crit-hit-glow");
-            badgeSection += `<span class="badge crit-hit">NAT 20 x${data.critsCount}</span>`;
-        } else if(data.alert === "crit-fail") {
-            displayContainer.classList.add("crit-miss-glow");
-            badgeSection += `<span class="badge crit-miss">NAT 1 x${data.missesCount}</span>`;
-        } else if(data.alert === "crit-both") {
-            displayContainer.classList.add("crit-both-glow");
-            badgeSection += `<span class="badge crit-hit">NAT 20 x${data.critsCount}</span><span class="badge crit-miss">NAT 1 x${data.missesCount}</span>`;
-        }
-
-        resultLabel.innerHTML = `<span class="player-tag">${data.player}</span> rolled ${data.title} ${badgeSection}`;
-        totalScoreDisplay.textContent = data.total;
-        breakdownDisplay.innerHTML = data.htmlDetails;
-
-        socket.emit('requestSync'); 
-    });
-
-    socket.on('historyCleared', () => {
-        displayContainer.className = "result-display";
-        totalScoreDisplay.textContent = '--';
-        breakdownDisplay.innerHTML = '';
-        resultLabel.textContent = 'Log Cleared By Host';
-        renderHistoryList([]);
-    });
-
-    function renderHistoryList(historyLog) {
-        historyList.innerHTML = '';
-        if(!historyLog || historyLog.length === 0) {
-            historyList.innerHTML = '<div style="color:var(--muted-text); font-style:italic; padding:10px;">No rolls logged yet.</div>';
-            return;
-        }
-        historyLog.forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            
-            if(item.alert === "crit-success") div.classList.add("crit-success-card");
-            if(item.alert === "crit-fail") div.classList.add("crit-fail-card");
-            if(item.alert === "crit-both") div.classList.add("crit-both-card");
-
-            const stripDetails = item.htmlDetails.replace(/<\/div>/g, ' | ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-            
-            let badgesHTML = '';
-            if(item.critsCount > 0) badgesHTML += `<span class="badge crit-hit">NAT 20 x${item.critsCount}</span>`;
-            if(item.missesCount > 0) badgesHTML += `<span class="badge crit-miss">NAT 1 x${item.missesCount}</span>`;
-
-            div.innerHTML = `
-                <div style="overflow: hidden; text-overflow: ellipsis;">
-                    <div>
-                        <span class="player-tag">${item.player}</span>: <strong>${item.title}</strong>
-                        ${badgesHTML}
-                    </div>
-                    <div class="history-meta">${item.time} • ${stripDetails}</div>
-                </div>
-                <div style="font-size: 1.5rem; font-weight: bold; color: ${item.alert==='crit-success'?'var(--crit-success)':(item.alert==='crit-fail'?'var(--crit-fail)':'var(--accent-color)')}; min-width:40px; text-align:right;">${item.total}</div>
-            `;
-            historyList.appendChild(div);
-        });
-    }
-
-    clearHistoryBtn.addEventListener('click', () => socket.emit('clearSharedHistory'));
-
-    // Presets
-    savePresetBtn.addEventListener('click', () => {
-        let name = presetNameInput.value.trim();
-        const pools = getCurrentSetup();
-        const mod = parseInt(modifierInput.value) || 0;
-        if(!name) name = pools.map(p => `${p.count}d${p.sides}`).join('+') + (mod !== 0 ? `${mod>=0?'+':''}${mod}` : '');
-        
-        presets.push({ 
-            name, pools, mod, mode: rollMode,
-            exploding: enableExplodingInput.checked,
-            alerts: enableAlertsInput.checked
-        });
-        localStorage.setItem('savedMultiPresetsProV6', JSON.stringify(presets));
-        renderPresets();
-        presetNameInput.value = '';
-    });
-
-    function renderPresets() {
-        presetContainer.innerHTML = '';
-        if(presets.length === 0) {
-            presetContainer.innerHTML = '<div style="color:var(--muted-text); font-size:0.85rem; font-style:italic;">No saved profiles.</div>';
-            return;
-        }
-        presets.forEach((preset, idx) => {
-            const div = document.createElement('div');
-            div.className = 'preset-row';
-            let badgeText = preset.mode !== 'normal' ? `<span class="badge ${preset.mode === 'advantage'?'adv':'dis'}">${preset.mode.slice(0,3)}</span>` : '';
-            if(preset.exploding) badgeText += `<span class="badge exploding">!</span>`;
-            
-            div.innerHTML = `
-                <div class="preset-info"><strong>${preset.name}</strong> ${badgeText}</div>
-                <button class="preset-delete" data-index="${idx}">&times;</button>
-            `;
-            div.querySelector('.preset-info').addEventListener('click', () => {
-                diceBuilderList.innerHTML = '';
-                preset.pools.forEach(p => createDicePoolRow(p.count, p.selectVal, p.selectVal === 'custom' ? p.sides : ''));
-                modifierInput.value = preset.mod;
-                rollMode = preset.mode;
-                
-                enableExplodingInput.checked = preset.exploding || false;
-                enableAlertsInput.checked = preset.alerts || false;
-
-                document.querySelectorAll('.adv-btn').forEach(b => b.classList.toggle('active', b.getAttribute('data-mode') === rollMode));
-                presetNameInput.value = preset.name;
-            });
-            div.querySelector('.preset-delete').addEventListener('click', (e) => {
-                e.stopPropagation(); presets.splice(idx, 1);
-                localStorage.setItem('savedMultiPresetsProV6', JSON.stringify(presets));
-                renderPresets();
-            });
-            presetContainer.appendChild(div);
-        });
-    }
-</script>
+<script src="/dice.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
